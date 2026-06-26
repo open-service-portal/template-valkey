@@ -1,0 +1,166 @@
+---
+# GitHub Actions workflow to build and publish the Crossplane Configuration package
+name: Release Configuration Package
+
+on:
+  # Trigger on version tags
+  push:
+    tags:
+      - 'v*.*.*'  # Semantic version tags (e.g., v1.0.0, v0.1.0)
+
+  # Allow manual trigger for testing
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to use (e.g., v0.1.0)'
+        required: true
+        default: 'v0.1.0'
+
+env:
+  REGISTRY: ghcr.io
+  PACKAGE_NAME: open-service-portal/configuration-valkey
+
+jobs:
+  build-and-push:
+    name: Build and Push Configuration Package
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write # For creating releases
+      packages: write # For pushing to GitHub Container Registry
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Crossplane CLI
+        run: |
+          curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh
+          sudo mv crossplane /usr/local/bin/
+          crossplane version 2>/dev/null || true
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${{ github.ref_name }}"
+          fi
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Building version: ${VERSION}"
+
+      - name: Build Configuration package
+        run: |
+          # Stamp the version onto the XRD label (crossplane.yaml has multi-line
+          # strings that yq would corrupt, so only touch xrd.yaml).
+          yq -i '.metadata.labels."openportal.dev/version" = env(VERSION)' configuration/xrd.yaml
+
+          # Build the .xpkg. rbac.yaml is a ClusterRole (not a package object),
+          # so it must be excluded from the Configuration package.
+          crossplane xpkg build \
+            --package-root=configuration/ \
+            --ignore="rbac.yaml" \
+            --package-file=configuration-valkey.xpkg
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+
+      - name: Push package to registry
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+
+          crossplane xpkg push \
+            --package-files=configuration-valkey.xpkg \
+            ${{ env.REGISTRY }}/${{ env.PACKAGE_NAME }}:${VERSION}
+
+          # Also push as 'latest' if this is not a pre-release
+          if [[ ! "${VERSION}" =~ -(alpha|beta|rc) ]]; then
+            crossplane xpkg push \
+              --package-files=configuration-valkey.xpkg \
+              ${{ env.REGISTRY }}/${{ env.PACKAGE_NAME }}:latest
+          fi
+
+      - name: Generate package manifest for catalog
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+
+          cat > catalog-entry.yaml <<EOF
+          ---
+          # Valkey Configuration Package
+          apiVersion: pkg.crossplane.io/v1
+          kind: Configuration
+          metadata:
+            name: configuration-valkey
+            namespace: crossplane-system
+          spec:
+            package: ${{ env.REGISTRY }}/${{ env.PACKAGE_NAME }}:${VERSION}
+            packagePullPolicy: IfNotPresent
+            revisionActivationPolicy: Automatic
+            revisionHistoryLimit: 3
+            skipDependencyResolution: true
+          EOF
+
+          echo "Generated catalog entry:"
+          cat catalog-entry.yaml
+
+      - name: Upload catalog entry as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: catalog-entry-${{ steps.version.outputs.VERSION }}
+          path: catalog-entry.yaml
+          retention-days: 30
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Configuration Valkey ${{ steps.version.outputs.VERSION }}
+          body: |
+            ## Valkey Configuration Package ${{ steps.version.outputs.VERSION }}
+
+            Crossplane Configuration package for a self-service Valkey instance
+            (`ValkeyInstance`, group `openportal.dev`).
+
+            ### Installation
+
+            ```bash
+            kubectl apply -f - <<EOF
+            apiVersion: pkg.crossplane.io/v1
+            kind: Configuration
+            metadata:
+              name: configuration-valkey
+              namespace: crossplane-system
+            spec:
+              package: ${{ env.REGISTRY }}/${{ env.PACKAGE_NAME }}:${{ steps.version.outputs.VERSION }}
+            EOF
+            ```
+
+            ### Package Details
+            - Registry: `${{ env.REGISTRY }}/${{ env.PACKAGE_NAME }}`
+            - Version: `${{ steps.version.outputs.VERSION }}`
+            - Supports: Crossplane v2.0+
+
+            ### Operator requirement
+            Password-protecting the Valkey `default` user requires the
+            valkey-io/valkey-operator probe-auth fix (#235), which is not in any
+            release yet (latest is v0.2.0). cluster-setup.sh builds the operator
+            from a pinned commit. See the spec in portal-workspace.
+          files: |
+            configuration-valkey.xpkg
+            catalog-entry.yaml
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
