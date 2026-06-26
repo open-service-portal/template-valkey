@@ -1,0 +1,139 @@
+# Composition: ValkeyInstance Implementation
+# Purpose: Render a password Secret + a ValkeyCluster (valkey-io operator) from a
+#          ValkeyInstance XR, applied via provider-kubernetes.
+# Restaurant Analogy: the "kitchen" — how the order is prepared.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: valkeyinstance
+spec:
+  compositeTypeRef:
+    apiVersion: openportal.dev/v1alpha1
+    kind: ValkeyInstance
+
+  mode: Pipeline
+  pipeline:
+
+  # Step 1: render resources with go-templating
+  - step: render
+    functionRef:
+      name: function-go-templating
+    input:
+      apiVersion: gotemplating.crossplane.io/v1beta1
+      kind: GoTemplate
+      source: Inline
+      inline:
+        template: |
+          {{- $xr := .observed.composite.resource }}
+          {{- $name := $xr.metadata.name }}
+          {{- $ns := $xr.metadata.namespace }}
+          {{- $size := $xr.spec.size | default "small" }}
+          {{- $persistence := $xr.spec.persistence | default dict }}
+          {{- $persEnabled := $persistence.enabled | default false }}
+          {{- $persSize := $persistence.size | default "1Gi" }}
+          {{- $secretName := printf "%s-auth" $name }}
+
+          {{/* size -> resources (small includes headroom for the exporter sidecar) */}}
+          {{- $cpuReq := "50m" }}{{- $memReq := "128Mi" }}{{- $cpuLim := "250m" }}{{- $memLim := "256Mi" }}
+          {{- if eq $size "medium" }}{{- $cpuReq = "250m" }}{{- $memReq = "512Mi" }}{{- $cpuLim = "500m" }}{{- $memLim = "1Gi" }}{{- end }}
+          {{- if eq $size "large" }}{{- $cpuReq = "500m" }}{{- $memReq = "1Gi" }}{{- $cpuLim = "1" }}{{- $memLim = "2Gi" }}{{- end }}
+
+          {{/* Reuse the password from the already-observed Secret so it stays
+               stable across reconciles; generate only on first creation. */}}
+          {{- $password := "" }}
+          {{- $authObserved := index (.observed.resources | default dict) (printf "%s-auth" $name) }}
+          {{- if $authObserved }}
+          {{-   $enc := dig "resource" "status" "atProvider" "manifest" "data" "password" "" $authObserved }}
+          {{-   if $enc }}{{- $password = $enc | b64dec }}{{- end }}
+          {{- end }}
+          {{- if not $password }}{{- $password = randAlphaNum 24 }}{{- end }}
+
+          ---
+          # App-user password Secret (create-only so it doesn't churn)
+          apiVersion: kubernetes.m.crossplane.io/v1alpha1
+          kind: Object
+          metadata:
+            name: {{ $name }}-auth
+            namespace: {{ $ns }}
+            annotations:
+              gotemplating.fn.crossplane.io/composition-resource-name: {{ $name }}-auth
+          spec:
+            forProvider:
+              manifest:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: {{ $secretName }}
+                  namespace: {{ $ns }}
+                  labels:
+                    app.kubernetes.io/managed-by: crossplane
+                    openportal.dev/valkeyinstance: {{ $name }}
+                type: Opaque
+                stringData:
+                  password: {{ $password }}
+            providerConfigRef:
+              kind: ClusterProviderConfig
+              name: kubernetes-provider
+
+          ---
+          # ValkeyCluster (operator CR). Cluster-mode only; shards:1/replicas:0 = single node.
+          apiVersion: kubernetes.m.crossplane.io/v1alpha1
+          kind: Object
+          metadata:
+            name: {{ $name }}-valkey
+            namespace: {{ $ns }}
+            annotations:
+              gotemplating.fn.crossplane.io/composition-resource-name: {{ $name }}-valkey
+          spec:
+            readiness:
+              policy: DeriveFromObject  # ready when the ValkeyCluster Ready condition is True
+            forProvider:
+              manifest:
+                apiVersion: valkey.io/v1alpha1
+                kind: ValkeyCluster
+                metadata:
+                  name: {{ $name }}
+                  namespace: {{ $ns }}
+                spec:
+                  shards: 1
+                  replicas: 0
+                  resources:
+                    requests:
+                      cpu: {{ $cpuReq }}
+                      memory: {{ $memReq }}
+                    limits:
+                      cpu: {{ $cpuLim }}
+                      memory: {{ $memLim }}
+                  {{- if $persEnabled }}
+                  persistence:
+                    size: {{ $persSize }}
+                  {{- end }}
+                  users:
+                  # Password-protect the built-in 'default' user so the instance
+                  # actually requires auth. Needs operator >= #235 (probes auth as
+                  # the '_operator' system user, not 'default'); on v0.2.0 this
+                  # breaks cluster formation. See docs/specs/valkey-spike-findings.md.
+                  - name: default
+                    enabled: true
+                    passwordSecret:
+                      name: {{ $secretName }}
+                      keys: [password]
+                    permissions: "+@all ~* &*"
+            providerConfigRef:
+              kind: ClusterProviderConfig
+              name: kubernetes-provider
+
+          ---
+          # Surface connection info on the XR status
+          apiVersion: openportal.dev/v1alpha1
+          kind: ValkeyInstance
+          metadata:
+            name: {{ $name }}
+          status:
+            endpoint: valkey-{{ $name }}.{{ $ns }}.svc.cluster.local:6379
+            authSecret: {{ $secretName }}
+
+  # Step 2: mark the XR ready when composed resources are ready
+  - step: auto-ready
+    functionRef:
+      name: function-auto-ready

@@ -1,0 +1,84 @@
+# XRD: ValkeyInstance (XR Definition)
+# Purpose: Self-service Valkey (Redis-compatible) instance via the official
+#          valkey-io operator, exposed as a namespaced Crossplane v2 XR.
+# Restaurant Analogy: the "menu item" — what customers can order.
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: valkeyinstances.openportal.dev
+  labels:
+    terasky.backstage.io/generate-form: "true"
+    openportal.dev/version: "dev"  # CI/CD replaces with the released version
+  annotations:
+    backstage.io/source-location: "url:https://github.com/open-service-portal/template-valkey"
+    terasky.backstage.io/add-to-catalog: 'true'
+    openportal.dev/tags: "database,cache,valkey,redis"
+    terasky.backstage.io/owner: 'platform-team'
+    terasky.backstage.io/system: 'infrastructure-templates'
+    terasky.backstage.io/component-type: 'crossplane-template'
+    terasky.backstage.io/lifecycle: 'production'
+spec:
+  scope: Namespaced  # Crossplane v2 — XRs live in any namespace, no claim
+  group: openportal.dev
+  names:
+    kind: ValkeyInstance
+    plural: valkeyinstances
+  defaultCompositionRef:
+    name: valkeyinstance
+  versions:
+  - name: v1alpha1
+    served: true
+    referenceable: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              size:
+                type: string
+                description: T-shirt size; maps to CPU/memory requests and limits.
+                enum:
+                - small
+                - medium
+                - large
+                default: small
+              persistence:
+                type: object
+                description: Optional persistent storage (PVC). Default is ephemeral.
+                properties:
+                  enabled:
+                    type: boolean
+                    description: Whether to attach a PersistentVolume so data survives pod restarts.
+                    default: false
+                  size:
+                    type: string
+                    description: PVC size when persistence is enabled.
+                    default: "1Gi"
+                default:
+                  enabled: false
+                  size: "1Gi"
+            required: []
+          status:
+            type: object
+            properties:
+              ready:
+                type: boolean
+                description: Whether the Valkey instance is ready.
+              endpoint:
+                type: string
+                description: In-cluster connection endpoint (host:port).
+              authSecret:
+                type: string
+                description: Name of the Secret holding the app user's password (key 'password').
+    additionalPrinterColumns:
+    - name: Size
+      type: string
+      jsonPath: .spec.size
+    - name: Ready
+      type: boolean
+      jsonPath: .status.ready
+    - name: Endpoint
+      type: string
+      jsonPath: .status.endpoint
