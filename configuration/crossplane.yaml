@@ -1,3 +1,6 @@
+---
+# Crossplane Configuration Package metadata
+# Defines how the template-valkey package is built and published.
 apiVersion: meta.pkg.crossplane.io/v1
 kind: Configuration
 metadata:

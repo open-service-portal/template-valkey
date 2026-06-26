@@ -1,0 +1,23 @@
+# Example order: a small, ephemeral Valkey instance.
+# Crossplane v2 — apply directly into your namespace (no claim).
+apiVersion: openportal.dev/v1alpha1
+kind: ValkeyInstance
+metadata:
+  name: my-cache
+  namespace: default
+spec:
+  size: small
+  persistence:
+    enabled: false
+---
+# Example: a medium instance with persistence enabled.
+apiVersion: openportal.dev/v1alpha1
+kind: ValkeyInstance
+metadata:
+  name: my-store
+  namespace: default
+spec:
+  size: medium
+  persistence:
+    enabled: true
+    size: 5Gi
