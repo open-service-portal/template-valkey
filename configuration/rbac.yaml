@@ -1,0 +1,23 @@
+# RBAC: let provider-kubernetes manage the resources this template composes.
+#
+# The Composition applies a ValkeyCluster (valkey.io) and a password Secret via
+# provider-kubernetes. provider-kubernetes only has the permissions granted to
+# its ServiceAccount; CRDs like valkey.io are NOT covered by its base role. This
+# aggregated ClusterRole adds them so the template works on clusters where the
+# provider's RBAC is scoped (not cluster-admin).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: provider-kubernetes-valkey
+  labels:
+    # Aggregated into the provider-kubernetes ClusterRole automatically.
+    rbac.crossplane.io/aggregate-to-provider-kubernetes: "true"
+rules:
+- apiGroups: ["valkey.io"]
+  resources: ["valkeyclusters", "valkeyclusters/status"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# The password Secret is a core resource; provider-kubernetes' base role usually
+# covers Secrets, but include it explicitly so a scoped provider still works.
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
