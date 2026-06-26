@@ -4,8 +4,8 @@ Self-service **Valkey** (Redis-compatible in-memory store) for the Open Service
 Portal, built on the official [`valkey-io/valkey-operator`](https://github.com/valkey-io/valkey-operator)
 and exposed as a namespaced Crossplane v2 XR.
 
-Spec & design: [`docs/specs/valkey-service.md`](../docs/specs/valkey-service.md) ·
-spike findings: [`docs/specs/valkey-spike-findings.md`](../docs/specs/valkey-spike-findings.md).
+Spec & design: [valkey-service.md](https://github.com/open-service-portal/portal-workspace/blob/main/docs/specs/valkey-service.md) ·
+spike findings: [valkey-spike-findings.md](https://github.com/open-service-portal/portal-workspace/blob/main/docs/specs/valkey-spike-findings.md).
 
 ## What you order
 
