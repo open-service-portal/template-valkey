@@ -7,38 +7,135 @@ and exposed as a namespaced Crossplane v2 XR.
 Spec & design: [valkey-service.md](https://github.com/open-service-portal/portal-workspace/blob/main/docs/specs/valkey-service.md) ·
 spike findings: [valkey-spike-findings.md](https://github.com/open-service-portal/portal-workspace/blob/main/docs/specs/valkey-spike-findings.md).
 
-## What you order
+---
+
+## Order a Valkey instance
+
+Apply a `ValkeyInstance` into your namespace (Crossplane v2 — a direct XR, no claim):
 
 ```yaml
+# my-cache.yaml
 apiVersion: openportal.dev/v1alpha1
 kind: ValkeyInstance
 metadata:
   name: my-cache
-  namespace: default
+  namespace: my-team        # your namespace
 spec:
-  size: small            # small | medium | large  -> CPU/memory
+  size: small               # small | medium | large
   persistence:
-    enabled: false       # set true + size for a PVC
+    enabled: false          # true + size for durable storage
 ```
-
-You get a running, **password-protected** Valkey. Connection info is on the XR status:
-
-- `status.endpoint` — `host:port` to connect to
-- `status.authSecret` — Secret holding the app user's password (key `password`)
 
 ```sh
-kubectl get valkeyinstance my-cache -o jsonpath='{.status.endpoint}'
-kubectl get secret my-cache-auth -o jsonpath='{.data.password}' | base64 -d
+kubectl apply -f my-cache.yaml
 ```
+
+That's the whole order. The platform creates a running, **password-protected**
+Valkey for you and reports back on the resource's status.
+
+> In the portal, the same thing is offered as a form in the software catalog
+> (the template is registered there); under the hood it creates this exact XR.
+
+### Parameters
+
+| Field | Values | Default | Effect |
+|---|---|---|---|
+| `size` | `small` \| `medium` \| `large` | `small` | CPU/memory of the Valkey pod |
+| `persistence.enabled` | `bool` | `false` | attach a PVC so data survives pod restarts (otherwise in-memory only) |
+| `persistence.size` | quantity (e.g. `5Gi`) | `1Gi` | PVC size when persistence is enabled |
+
+Size → resources:
+
+| size | cpu req | mem req | mem limit |
+|---|---|---|---|
+| small | 50m | 128Mi | 256Mi |
+| medium | 250m | 512Mi | 1Gi |
+| large | 500m | 1Gi | 2Gi |
+
+Auth, TLS, replicas and sharding are not exposed in the MVP (the XRD is designed
+to add them later without breaking changes).
+
+## Check status
+
+```sh
+kubectl get valkeyinstance my-cache -n my-team
+```
+
+```
+NAME       SIZE    READY   ENDPOINT
+my-cache   small   True    valkey-my-cache.my-team.svc.cluster.local:6379
+```
+
+`READY=True` means it's ready to use. Two fields on the status carry everything
+you need to connect:
+
+- `status.endpoint` — the in-cluster address, `host:6379`
+- `status.authSecret` — the Secret holding the password (key `password`)
+
+```sh
+kubectl get valkeyinstance my-cache -n my-team -o jsonpath='{.status.endpoint}'
+kubectl get secret my-cache-auth -n my-team -o jsonpath='{.data.password}' | base64 -d
+```
+
+## Connect
+
+Authenticate as the Valkey **`default`** user with that password.
+
+From an app, use the endpoint host/port and the password from the Secret
+(mount/reference `my-cache-auth`, key `password`). Quick check with `valkey-cli`:
+
+```sh
+PW=$(kubectl get secret my-cache-auth -n my-team -o jsonpath='{.data.password}' | base64 -d)
+# from a pod that can reach the service:
+valkey-cli -h valkey-my-cache.my-team.svc.cluster.local -p 6379 -a "$PW" ping   # -> PONG
+```
+
+Without the password you get `NOAUTH Authentication required` — auth is enforced.
+
+> **Cluster mode:** the operator always runs Valkey in cluster mode (a single
+> node owns all 16384 hash slots). Use a Valkey/Redis client that supports
+> cluster mode, or point it at the single node directly.
+
+## Remove
+
+Delete the XR — Crossplane cascades the cleanup (ValkeyCluster, pods, the
+generated Secret, and the PVC if any):
+
+```sh
+kubectl delete valkeyinstance my-cache -n my-team
+```
+
+> With `persistence.enabled: true`, deleting removes the PVC and its data. Back
+> up first if you need to keep it.
+
+---
 
 ## How it works
 
-`ValkeyInstance` XR → Composition (`function-go-templating`) renders a password
-`Secret` (create-only) and a `ValkeyCluster` (`shards:1, replicas:0`) → both
-applied via **provider-kubernetes** → reconciled by the **valkey-operator**.
+```mermaid
+flowchart LR
+  you["You"] -->|"apply XR"| xr["ValkeyInstance<br/>(your namespace)"]
+  xr --> comp["Composition<br/>function-go-templating"]
+  comp --> sec["Secret<br/>(generated password)"]
+  comp --> vc["ValkeyCluster<br/>valkey.io/v1alpha1"]
+  vc -->|"reconciled by"| op["valkey-operator<br/>(installed once per cluster)"]
+  op --> pod["StatefulSet + Service<br/>valkey-&lt;name&gt;:6379"]
+  pod -.->|"status: Ready, endpoint, authSecret"| xr
+```
 
-The operator is platform infrastructure, installed once per cluster by
-`scripts/cluster-setup.sh` (not by this Composition).
+The Composition renders a password `Secret` and a `ValkeyCluster`
+(`shards:1, replicas:0`), applied via provider-kubernetes; the operator turns
+that into a running, password-protected Valkey. The operator itself is platform
+infrastructure, installed once per cluster (not by this template).
+
+## Requirements
+
+- A cluster set up by `portal-workspace/scripts/cluster-setup.sh` (Crossplane
+  v2, provider-kubernetes, functions, and the Valkey operator).
+- **Valkey operator ≥ #235** (probes authenticate as the `_operator` system
+  user). On the released v0.2.0, password-protecting the `default` user breaks
+  cluster formation, so `cluster-setup.sh` builds the operator from a pinned
+  commit. See the spike findings for details.
 
 ## Layout
 
@@ -47,12 +144,12 @@ configuration/
   crossplane.yaml    # Configuration package metadata
   xrd.yaml           # ValkeyInstance API (XRD, v2, namespaced)
   composition.yaml   # Pipeline: go-templating -> provider-kubernetes -> auto-ready
+  rbac.yaml          # provider-kubernetes RBAC for valkey.io + secrets
 example/
   xr.yaml            # example orders
+.github/workflows/
+  release.yaml       # tag v* -> build & push the Configuration package to ghcr
 ```
 
-## MVP scope
-
-Single instance, `size` + optional `persistence`, one password-protected app user.
-TLS, HA/replicas, sharding, advanced ACL and Backstage integration are deferred —
-the XRD is designed to add them later without breaking changes.
+Released as `ghcr.io/open-service-portal/configuration-valkey` and registered in
+the [catalog](https://github.com/open-service-portal/catalog) for GitOps delivery.
