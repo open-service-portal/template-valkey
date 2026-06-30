@@ -43,6 +43,7 @@ Valkey for you and reports back on the resource's status.
 | `size` | `small` \| `medium` \| `large` | `small` | CPU/memory of the Valkey pod |
 | `persistence.enabled` | `bool` | `false` | attach a PVC so data survives pod restarts (otherwise in-memory only) |
 | `persistence.size` | quantity (e.g. `5Gi`) | `1Gi` | PVC size when persistence is enabled |
+| `observability.webUI` | `bool` | `true` | deploy a per-instance Valkey Admin web UI (see [Observe](#observe-web-ui)); set `false` to opt out |
 
 Size → resources:
 
@@ -95,6 +96,28 @@ Without the password you get `NOAUTH Authentication required` — auth is enforc
 > **Cluster mode:** the operator always runs Valkey in cluster mode (a single
 > node owns all 16384 hash slots). Use a Valkey/Redis client that supports
 > cluster mode, or point it at the single node directly.
+
+## Observe (web UI)
+
+Every instance ships with a **[Valkey Admin](https://valkey-admin.valkey.io/) web UI**
+(`spec.observability.webUI`, default `true`) — a `<name>-admin` Deployment + Service in
+the same namespace, already wired to your instance (host, and the `default` user's
+password from the Secret). It gives a dashboard, cluster topology, key browser, and
+command logs.
+
+Reach it from your machine with a port-forward:
+
+```sh
+kubectl port-forward svc/my-cache-admin -n my-team 8080:8080
+# open http://localhost:8080
+```
+
+Set `observability.webUI: false` to skip it for a headless instance.
+
+> Advanced per-node metrics (hot-keys, command-log retention) come from the upstream
+> *metrics sidecar*, which is **not** deployed here — it needs an image osp would have
+> to publish, and it is a large-cluster optimisation. Dashboard, topology, and key
+> browser work from the app's own connection. (Tracked as a follow-up.)
 
 ## Remove
 

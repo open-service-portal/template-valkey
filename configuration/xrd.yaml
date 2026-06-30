@@ -59,6 +59,19 @@ spec:
                 default:
                   enabled: false
                   size: "1Gi"
+              observability:
+                type: object
+                description: Bundled observability for this instance.
+                properties:
+                  webUI:
+                    type: boolean
+                    description: >-
+                      Deploy a per-instance Valkey Admin web UI (dashboard, topology,
+                      key browser) alongside the instance. Access via
+                      'kubectl port-forward svc/<name>-admin 8080:8080'.
+                    default: true
+                default:
+                  webUI: true
             required: []
           status:
             type: object

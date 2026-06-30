@@ -32,6 +32,7 @@ spec:
           {{- $persEnabled := $persistence.enabled | default false }}
           {{- $persSize := $persistence.size | default "1Gi" }}
           {{- $secretName := printf "%s-auth" $name }}
+          {{- $webUI := dig "spec" "observability" "webUI" true $xr }}
 
           {{/* size -> resources (small includes headroom for the exporter sidecar) */}}
           {{- $cpuReq := "50m" }}{{- $memReq := "128Mi" }}{{- $cpuLim := "250m" }}{{- $memLim := "256Mi" }}
@@ -122,6 +123,112 @@ spec:
             providerConfigRef:
               kind: ClusterProviderConfig
               name: kubernetes-provider
+
+          {{- if $webUI }}
+          ---
+          # Per-instance Valkey Admin web UI (app-only; connects over the network,
+          # no operator-owned StatefulSet patch). Access via kubectl port-forward.
+          apiVersion: kubernetes.m.crossplane.io/v1alpha1
+          kind: Object
+          metadata:
+            name: {{ $name }}-admin
+            namespace: {{ $ns }}
+            annotations:
+              gotemplating.fn.crossplane.io/composition-resource-name: {{ $name }}-admin
+          spec:
+            forProvider:
+              manifest:
+                apiVersion: apps/v1
+                kind: Deployment
+                metadata:
+                  name: {{ $name }}-admin
+                  namespace: {{ $ns }}
+                  labels:
+                    app.kubernetes.io/managed-by: crossplane
+                    openportal.dev/valkeyinstance: {{ $name }}
+                    app: {{ $name }}-admin
+                spec:
+                  replicas: 1
+                  selector:
+                    matchLabels:
+                      app: {{ $name }}-admin
+                  template:
+                    metadata:
+                      labels:
+                        app: {{ $name }}-admin
+                    spec:
+                      containers:
+                      - name: app
+                        image: valkey/valkey-admin:1.0.2
+                        ports:
+                        - containerPort: 8080
+                          name: http
+                        env:
+                        - name: PORT
+                          value: "8080"
+                        - name: DEPLOYMENT_MODE
+                          value: "K8"
+                        - name: VALKEY_HOST
+                          value: valkey-{{ $name }}.{{ $ns }}.svc.cluster.local
+                        - name: VALKEY_PORT
+                          value: "6379"
+                        - name: VALKEY_USERNAME
+                          value: "default"
+                        - name: VALKEY_PASSWORD
+                          valueFrom:
+                            secretKeyRef:
+                              name: {{ $secretName }}
+                              key: password
+                        - name: VALKEY_TLS
+                          value: "false"
+                        readinessProbe:
+                          httpGet:
+                            path: /
+                            port: http
+                          initialDelaySeconds: 5
+                          periodSeconds: 10
+                        livenessProbe:
+                          httpGet:
+                            path: /
+                            port: http
+                          initialDelaySeconds: 15
+                          periodSeconds: 20
+            providerConfigRef:
+              kind: ClusterProviderConfig
+              name: kubernetes-provider
+
+          ---
+          # Service for the web UI (port-forward target)
+          apiVersion: kubernetes.m.crossplane.io/v1alpha1
+          kind: Object
+          metadata:
+            name: {{ $name }}-admin-svc
+            namespace: {{ $ns }}
+            annotations:
+              gotemplating.fn.crossplane.io/composition-resource-name: {{ $name }}-admin-svc
+          spec:
+            forProvider:
+              manifest:
+                apiVersion: v1
+                kind: Service
+                metadata:
+                  name: {{ $name }}-admin
+                  namespace: {{ $ns }}
+                  labels:
+                    app.kubernetes.io/managed-by: crossplane
+                    openportal.dev/valkeyinstance: {{ $name }}
+                    app: {{ $name }}-admin
+                spec:
+                  selector:
+                    app: {{ $name }}-admin
+                  ports:
+                  - name: http
+                    port: 8080
+                    targetPort: http
+            providerConfigRef:
+              kind: ClusterProviderConfig
+              name: kubernetes-provider
+          {{- end }}
 
           ---
           # Surface connection info on the XR status
