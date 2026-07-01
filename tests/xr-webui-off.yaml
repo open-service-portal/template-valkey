@@ -1,0 +1,9 @@
+apiVersion: openportal.dev/v1alpha1
+kind: ValkeyInstance
+metadata:
+  name: test-off
+  namespace: default
+spec:
+  size: small
+  observability:
+    webUI: false
