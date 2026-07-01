@@ -159,7 +159,7 @@ spec:
                     spec:
                       containers:
                       - name: app
-                        image: valkey/valkey-admin:1.0.2
+                        image: valkey/valkey-admin:edge
                         ports:
                         - containerPort: 8080
                           name: http

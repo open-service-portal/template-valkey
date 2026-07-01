@@ -14,7 +14,7 @@ check(){ if eval "$2"; then echo "  ok   $1"; pass=$((pass+1)); else echo "  FAI
 # AC-vaw-1-1 — webUI default(true) -> admin Deployment + Service
 check "AC-vaw-1-1 Deployment"  'grep -q "resource-name: test-on-admin$" <<<"$ON"'
 check "AC-vaw-1-1 Service"      'grep -q "resource-name: test-on-admin-svc$" <<<"$ON"'
-check "AC-vaw-1-1 image pinned" 'grep -q "valkey/valkey-admin:1.0.2" <<<"$ON"'
+check "AC-vaw-1-1 image tag (edge)" 'grep -q "valkey/valkey-admin:edge" <<<"$ON"'
 # AC-vaw-1-2 — env wired incl. auth from observed Secret
 check "AC-vaw-1-2 VALKEY_HOST"     'grep -q "valkey-test-on.default.svc.cluster.local" <<<"$ON"'
 check "AC-vaw-1-2 DEPLOYMENT_MODE" 'grep -Eq "value: \"?K8\"?" <<<"$ON"'
