@@ -115,6 +115,15 @@ port-forward is still fine for API/`curl` checks:
 kubectl port-forward svc/my-cache-admin -n my-team 8080:8080   # API/curl only, not a browser
 ```
 
+Connecting in the UI (**Add Connection**):
+
+- **Endpoint Type: `Node`** — point at the single node. Do **not** use `Discovery`:
+  cluster discovery targets the node's announced pod IP and times out.
+- **Host / Port:** from `status.endpoint` (e.g. `valkey-my-cache.my-team.svc.cluster.local` / `6379`).
+- **Auth: Password**, username `default`, password from the Secret (see [Connect](#connect)).
+- **Untick `Use TLS` and `Verify TLS Certificate`** — both default to on, but the
+  instance speaks plaintext on `6379`, so leaving them on fails the TLS handshake.
+
 Set `observability.webUI: false` to skip it for a headless instance.
 
 > **Metrics/Activity need a separate sidecar.** The dashboard's CPU/memory metrics and
