@@ -101,23 +101,28 @@ Without the password you get `NOAUTH Authentication required` — auth is enforc
 
 Every instance ships with a **[Valkey Admin](https://valkey-admin.valkey.io/) web UI**
 (`spec.observability.webUI`, default `true`) — a `<name>-admin` Deployment + Service in
-the same namespace, already wired to your instance (host, and the `default` user's
-password from the Secret). It gives a dashboard, cluster topology, key browser, and
-command logs.
+the same namespace, wired to your instance's host. It gives you cluster topology, a
+key browser, and an interactive console. You supply the `default` user's password
+once when you connect (get it from the Secret — see [Connect](#connect)).
 
-Reach it from your machine with a port-forward:
+Browser access needs HTTPS: the Valkey Admin app sends `Strict-Transport-Security`
+(HSTS), so a plain `http://` port-forward loads a blank page (assets get upgraded to
+`https://` and fail). Expose it over HTTPS through the platform's Gateway API
+`ExposedService` (a per-instance `<name>.<baseDomain>` with a wildcard cert). A
+port-forward is still fine for API/`curl` checks:
 
 ```sh
-kubectl port-forward svc/my-cache-admin -n my-team 8080:8080
-# open http://localhost:8080
+kubectl port-forward svc/my-cache-admin -n my-team 8080:8080   # API/curl only, not a browser
 ```
 
 Set `observability.webUI: false` to skip it for a headless instance.
 
-> Advanced per-node metrics (hot-keys, command-log retention) come from the upstream
-> *metrics sidecar*, which is **not** deployed here — it needs an image osp would have
-> to publish, and it is a large-cluster optimisation. Dashboard, topology, and key
-> browser work from the app's own connection. (Tracked as a follow-up.)
+> **Metrics/Activity need a separate sidecar.** The dashboard's CPU/memory metrics and
+> the Activity/Hot-Keys views come from the upstream Valkey Admin *metrics sidecar*
+> (one per Valkey pod), which is **not** deployed here — its image is not yet published
+> upstream ([valkey-admin#382](https://github.com/valkey-io/valkey-admin/issues/382)).
+> **Connect, cluster topology, and the key browser work from the app's own connection**;
+> the metrics-backed panels will populate once the sidecar is deployed. (Tracked as a follow-up.)
 
 ## Remove
 
